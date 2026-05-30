@@ -1,4 +1,4 @@
-FROM python:3.10
+FROM python:3.10-slim
 
 RUN apt-get update && apt-get install -y \
     build-essential \
@@ -6,22 +6,24 @@ RUN apt-get update && apt-get install -y \
     libxcb1 \
     libglx-mesa0 \
     libgl1 \
+    libgomp1 \
     && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /workspace
-
-COPY requirements.txt .
 
 ENV MAKEFLAGS="-j1"
 ENV PIP_NO_CACHE_DIR=1
 ENV TMPDIR=/tmp
 
-# Install heavy packages first separately, then the rest
 RUN pip install --no-cache-dir torch torchvision --extra-index-url https://download.pytorch.org/whl/cpu
 RUN pip install --no-cache-dir streamlit opencv-python-headless ultralytics scipy
 
-COPY . .
+RUN useradd -m -u 1000 user
+USER user
+ENV HOME=/home/user PATH=/home/user/.local/bin:$PATH
+WORKDIR /home/user/app
 
-EXPOSE 8501
+COPY --chown=user . .
 
-CMD ["streamlit", "run", "app2.py", "--server.address=0.0.0.0"]
+EXPOSE 7860
+
+# Multi-line list strings ko streamline execution me single standard line command bana diya
+CMD ["streamlit", "run", "app2.py", "--server.port=7860", "--server.address=0.0.0.0", "--server.enableXsrfProtection=false"]
