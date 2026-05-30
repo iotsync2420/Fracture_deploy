@@ -1,4 +1,3 @@
-
 import os  # <-- MUST BE AT THE VERY TOP
 import urllib.request
 import streamlit as st
@@ -18,7 +17,6 @@ def load_model():
     MODEL_URL = "https://huggingface.co/beingVaishnavi/fracture-yolov8-weights/resolve/main/best.pt?download=true"
 
     if not os.path.exists(MODEL_PATH):
-        # Displays a status spinner in the UI while downloading the 207MB file
         with st.spinner("Downloading AI model weights from Hugging Face... This might take a minute."):
             urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
         st.success("Model download complete!")
@@ -31,16 +29,11 @@ model = load_model()
 # STEP 1 – Preprocessing: remove glare / light artifacts from xray
 # ─────────────────────────────────────────────────────────────────────────────
 def remove_glare(img_bgr):
-    """
-    Detect homogeneous bright blobs (light-source glare on the xray film)
-    and inpaint over them, then apply CLAHE to boost bone contrast.
-    """
     gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY).astype(np.float32)
     blur = cv2.blur(gray, (31, 31))
     blur_sq = cv2.blur(gray ** 2, (31, 31))
     local_std = np.sqrt(np.maximum(blur_sq - blur ** 2, 0))
 
-    # Glare = bright AND uniform (low local std-dev)
     glare_mask = ((gray > 180) & (local_std < 15)).astype(np.uint8)
     glare_mask = cv2.dilate(glare_mask, np.ones((15, 15), np.uint8))
 
@@ -120,7 +113,6 @@ def get_fracture_boxes(cam, gray, bone_mask, cam_threshold=0.70,
     smooth = gaussian_filter(cam, sigma=max(oh, ow) * 0.025)
     smooth /= smooth.max() + 1e-8
 
-    # Local maxima
     local_max = smooth == maximum_filter(smooth, size=peak_search_size)
     peaks_y, peaks_x = np.where(local_max & (smooth > cam_threshold))
 
@@ -128,16 +120,14 @@ def get_fracture_boxes(cam, gray, bone_mask, cam_threshold=0.70,
     for py, px in zip(peaks_y, peaks_x):
         score = float(smooth[py, px])
 
-        # ── Bone filter: reject peaks on background or pure glare ────────────
         r = 30
         y1r, y2r = max(0, py - r), min(oh, py + r)
         x1r, x2r = max(0, px - r), min(ow, px + r)
         patch_bone      = bone_mask[y1r:y2r, x1r:x2r].mean() / 255
         patch_intensity = float(gray[y1r:y2r, x1r:x2r].mean())
         if patch_bone < 0.30 or patch_intensity < 30 or patch_intensity > 228:
-            continue  # skip artifact / background
+            continue  
 
-        # ── Radius from CAM half-power width ─────────────────────────────────
         sub_r = 80
         sub   = smooth[max(0, py - sub_r):min(oh, py + sub_r),
                        max(0, px - sub_r):min(ow, px + sub_r)]
@@ -153,7 +143,6 @@ def get_fracture_boxes(cam, gray, bone_mask, cam_threshold=0.70,
             "radius": radius,
         })
 
-    # ── Merge overlapping boxes ───────────────────────────────────────────────
     merged = True
     while merged and len(boxes) > 1:
         merged = False
@@ -167,7 +156,6 @@ def get_fracture_boxes(cam, gray, bone_mask, cam_threshold=0.70,
                 if used[j]: continue
                 ax1,ay1,ax2,ay2 = boxes[i]["box"]
                 bx1,by1,bx2,by2 = boxes[j]["box"]
-                # Overlap?
                 if ax1 < bx2 and ax2 > bx1 and ay1 < by2 and ay2 > by1:
                     grp.append(boxes[j])
                     used[j] = True
@@ -201,9 +189,7 @@ def draw_results(img_bgr, boxes, smooth, show_heatmap=True, heatmap_alpha=0.30):
         x1, y1, x2, y2 = b["box"]
         score           = b["score"]
         color           = (0, 255, 80)
-
         cv2.rectangle(out, (x1, y1), (x2, y2), color, 2)
-
         label = f"Fracture {score:.0%}"
         font, fscale, fthick = cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2
         (tw, th), bl = cv2.getTextSize(label, font, fscale, fthick)
@@ -214,8 +200,24 @@ def draw_results(img_bgr, boxes, smooth, show_heatmap=True, heatmap_alpha=0.30):
     return out
 
 # ─────────────────────────────────────────────────────────────────────────────
-# UI
+# OPTIMIZATION STEP: Cache execution flow to bypass CPU overhead bottlenecks
 # ─────────────────────────────────────────────────────────────────────────────
+@st.cache_data(show_spinner=False)
+def run_inference_pipeline(img_bgr, cam_thresh):
+    enhanced, glare_mask = remove_glare(img_bgr)
+    gray_orig = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+    bone_mask = build_bone_mask(gray_orig)
+
+    torch_model = model.model
+    torch_model.eval()
+    cam = compute_eigencam(enhanced, torch_model)
+
+    boxes, smooth = get_fracture_boxes(
+        cam, gray_orig, bone_mask, cam_threshold=cam_thresh
+    )
+    return boxes, smooth, enhanced
+
+# ── UI Layout ────────────────────────────────────────────────────────────────
 st.title("Bone Fracture Detection using AI")
 st.markdown(
     "Just upload your Xray and get the results instantly .... Because we understand , every second matters in diagnosis!!"
@@ -231,7 +233,6 @@ with st.sidebar:
     heatmap_alpha = st.slider("Heatmap opacity", 0.10, 0.60, 0.30, 0.05,
                               disabled=not show_heatmap)
     st.divider()
-    
 
 uploaded = st.file_uploader("Upload X-ray", type=["jpg", "jpeg", "png"])
 
@@ -242,28 +243,16 @@ if uploaded:
         st.error("Could not decode image.")
         st.stop()
 
-    with st.spinner("Processing…"):
-        # Preprocess
-        enhanced, glare_mask = remove_glare(img_bgr)
-        gray_orig = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-        bone_mask = build_bone_mask(gray_orig)
+    with st.spinner("Analyzing structural metrics and processing tensor maps... Please wait."):
+        # Calls the isolated cached inference processing pipeline cleanly
+        boxes, smooth, enhanced = run_inference_pipeline(img_bgr, cam_thresh)
 
-        # EigenCAM on glare-free image
-        torch_model = model.model
-        torch_model.eval()
-        cam = compute_eigencam(enhanced, torch_model)
-
-        # Detect fracture locations
-        boxes, smooth = get_fracture_boxes(
-            cam, gray_orig, bone_mask, cam_threshold=cam_thresh
-        )
-
-    # ── Display ──────────────────────────────────────────────────────────────
+    # ── Display Grid ─────────────────────────────────────────────────────────
     col1, col2 = st.columns(2)
     img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
 
     with col1:
-        st.subheader("Original")
+        st.subheader("Original X-ray")
         st.image(img_rgb, use_container_width=True)
 
     with col2:
@@ -280,13 +269,13 @@ if uploaded:
             result = draw_results(img_bgr, boxes, smooth, show_heatmap, heatmap_alpha)
             st.image(cv2.cvtColor(result, cv2.COLOR_BGR2RGB), use_container_width=True)
 
-    # ── Summary ───────────────────────────────────────────────────────────────
+    # ── Summary Metrics ──────────────────────────────────────────────────────
     st.divider()
     if boxes:
         st.subheader(f"🔍 {len(boxes)} Fracture Region(s) Detected")
         rows = []
         for i, b in enumerate(boxes):
-            x1,y1,x2,y2 = b["box"]
+            x1, y1, x2, y2 = b["box"]
             rows.append({
                 "#":           i + 1,
                 "Confidence":  f"{b['score']:.0%}",
@@ -295,4 +284,4 @@ if uploaded:
             })
         st.table(rows)
     else:
-        st.info("Try lowering **Detection sensitivity** in the sidebar.")
+        st.info("Try lowering **Detection sensitivity** in the sidebar if regions look suspect.")
