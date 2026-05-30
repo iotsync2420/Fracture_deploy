@@ -1,6 +1,18 @@
 import os  # <-- MUST BE AT THE VERY TOP
 import urllib.request
 import streamlit as st
+
+# ── SYSTEM LEVEL DOWNLOAD (Bypasses Streamlit Caching Completely) ──────────────
+MODEL_PATH = "best.pt"
+MODEL_URL = "https://huggingface.co/beingVaishnavi/fracture-yolov8-weights/resolve/main/best.pt?download=true"
+
+# This runs directly on the server container before any Streamlit UI logic starts
+if not os.path.exists(MODEL_PATH):
+    print("Downloading weights directly to server disk...")
+    urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
+    print("Download complete!")
+
+# Now we safely import the rest of your heavy libraries
 from ultralytics import YOLO
 from ultralytics.data.augment import LetterBox
 import cv2
@@ -13,23 +25,10 @@ st.set_page_config(page_title="Bone Fracture Detection", layout="wide")
 
 @st.cache_resource
 def load_model():
-    MODEL_PATH = "best.pt"
-    MODEL_URL = "https://huggingface.co/beingVaishnavi/fracture-yolov8-weights/resolve/main/best.pt?download=true"
-
-    if not os.path.exists(MODEL_PATH):
-        # This keeps the browser from rendering an empty page during the massive pull
-        with st.spinner("Initializing neural configuration and fetching weights from Hugging Face... This takes about a minute."):
-            urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
-        # Force a programmatic rerun now that the file exists locally on the server container disk
-        st.rerun()
-        
+    # Since the file is guaranteed to be on disk by now, this loads instantly
     return YOLO(MODEL_PATH)
 
 model = load_model()
-
-# ─────────────────────────────────────────────────────────────────────────────
-# STEP 1 – Preprocessing: remove glare / light artifacts from xray
-# ... rest of your code stays exactly the same ...
 
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 1 – Preprocessing: remove glare / light artifacts from xray
@@ -250,7 +249,6 @@ if uploaded:
         st.stop()
 
     with st.spinner("Analyzing structural metrics and processing tensor maps... Please wait."):
-        # Calls the isolated cached inference processing pipeline cleanly
         boxes, smooth, enhanced = run_inference_pipeline(img_bgr, cam_thresh)
 
     # ── Display Grid ─────────────────────────────────────────────────────────
