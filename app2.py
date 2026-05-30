@@ -1,18 +1,18 @@
 import os  # <-- MUST BE AT THE VERY TOP
 import urllib.request
 import streamlit as st
+import gc  # <-- Force garbage collection for low-memory environments
 
-# ── SYSTEM LEVEL DOWNLOAD (Bypasses Streamlit Caching Completely) ──────────────
+# ── SYSTEM LEVEL DOWNLOAD ─────────────────────────────────────────────────────
 MODEL_PATH = "best.pt"
 MODEL_URL = "https://huggingface.co/beingVaishnavi/fracture-yolov8-weights/resolve/main/best.pt?download=true"
 
-# This runs directly on the server container before any Streamlit UI logic starts
 if not os.path.exists(MODEL_PATH):
     print("Downloading weights directly to server disk...")
     urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
     print("Download complete!")
 
-# Now we safely import the rest of your heavy libraries
+# Safely import the remaining libraries
 from ultralytics import YOLO
 from ultralytics.data.augment import LetterBox
 import cv2
@@ -25,8 +25,10 @@ st.set_page_config(page_title="Bone Fracture Detection", layout="wide")
 
 @st.cache_resource
 def load_model():
-    # Since the file is guaranteed to be on disk by now, this loads instantly
-    return YOLO(MODEL_PATH)
+    # Load model and immediately put it in CPU evaluation mode
+    m = YOLO(MODEL_PATH)
+    m.model.eval()
+    return m
 
 model = load_model()
 
@@ -49,11 +51,14 @@ def remove_glare(img_bgr):
     return enhanced, glare_mask
 
 # ─────────────────────────────────────────────────────────────────────────────
-# STEP 2 – EigenCAM on multiple backbone layers
+# STEP 2 – EigenCAM Optimized for Ultra-Low Memory Environments (640x640)
 # ─────────────────────────────────────────────────────────────────────────────
 def compute_eigencam(img_bgr, torch_model, target_layers=(6, 12, 15, 18)):
     oh, ow = img_bgr.shape[:2]
-    lb      = LetterBox(new_shape=(1024, 1024))
+    
+    # OPTIMIZATION: Downscale from 1024 to 640 to prevent OOM
+    IMAGE_SIZE = 640 
+    lb      = LetterBox(new_shape=(IMAGE_SIZE, IMAGE_SIZE))
     resized = lb(image=img_bgr)
     inp     = torch.from_numpy(resized).permute(2, 0, 1).float().unsqueeze(0) / 255.0
 
@@ -65,14 +70,16 @@ def compute_eigencam(img_bgr, torch_model, target_layers=(6, 12, 15, 18)):
         try: handles.append(torch_model.model[idx].register_forward_hook(make_hook(idx)))
         except Exception: pass
 
-    with torch.no_grad(): torch_model(inp)
+    with torch.no_grad(): 
+        torch_model(inp)
+        
     for hh in handles: hh.remove()
 
-    scale = 1024 / max(oh, ow)
+    scale = IMAGE_SIZE / max(oh, ow)
     new_h, new_w = int(oh * scale), int(ow * scale)
-    pad_x, pad_y = (1024 - new_w) // 2, (1024 - new_h) // 2
+    pad_x, pad_y = (IMAGE_SIZE - new_w) // 2, (IMAGE_SIZE - new_h) // 2
 
-    combined = np.zeros((1024, 1024), dtype=np.float32)
+    combined = np.zeros((IMAGE_SIZE, IMAGE_SIZE), dtype=np.float32)
     for feat in hooks.values():
         f = feat[0].cpu().numpy()
         C, H, W = f.shape
@@ -80,19 +87,24 @@ def compute_eigencam(img_bgr, torch_model, target_layers=(6, 12, 15, 18)):
         centered = flat - flat.mean(axis=1, keepdims=True)
         v = np.ones(C) / np.sqrt(C)
         cov = centered @ centered.T / (H * W)
-        for _ in range(30):
+        for _ in range(20): # Lowered iterations slightly to speed up CPU calculations
             v = cov @ v
             nrm = np.linalg.norm(v)
             if nrm < 1e-10: break
             v /= nrm
         cam = np.maximum((v @ flat).reshape(H, W), 0)
         if cam.max() > 1e-8: cam /= cam.max()
-        combined += cv2.resize(cam, (1024, 1024), interpolation=cv2.INTER_CUBIC)
+        combined += cv2.resize(cam, (IMAGE_SIZE, IMAGE_SIZE), interpolation=cv2.INTER_CUBIC)
 
     cam_crop = combined[pad_y:pad_y + new_h, pad_x:pad_x + new_w]
     cam_orig = cv2.resize(cam_crop, (ow, oh), interpolation=cv2.INTER_CUBIC)
     cam_orig = np.maximum(cam_orig, 0)
     if cam_orig.max() > 1e-8: cam_orig /= cam_orig.max()
+    
+    # Explicit clean up of tensors out of memory scope
+    del inp, hooks
+    gc.collect()
+    
     return cam_orig
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -220,6 +232,9 @@ def run_inference_pipeline(img_bgr, cam_thresh):
     boxes, smooth = get_fracture_boxes(
         cam, gray_orig, bone_mask, cam_threshold=cam_thresh
     )
+    
+    # Run a quick garbage collect clear inside cache boundaries
+    gc.collect()
     return boxes, smooth, enhanced
 
 # ── UI Layout ────────────────────────────────────────────────────────────────
