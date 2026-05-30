@@ -17,13 +17,19 @@ def load_model():
     MODEL_URL = "https://huggingface.co/beingVaishnavi/fracture-yolov8-weights/resolve/main/best.pt?download=true"
 
     if not os.path.exists(MODEL_PATH):
-        with st.spinner("Downloading AI model weights from Hugging Face... This might take a minute."):
+        # This keeps the browser from rendering an empty page during the massive pull
+        with st.spinner("Initializing neural configuration and fetching weights from Hugging Face... This takes about a minute."):
             urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
-        st.success("Model download complete!")
+        # Force a programmatic rerun now that the file exists locally on the server container disk
+        st.rerun()
         
     return YOLO(MODEL_PATH)
 
 model = load_model()
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STEP 1 – Preprocessing: remove glare / light artifacts from xray
+# ... rest of your code stays exactly the same ...
 
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 1 – Preprocessing: remove glare / light artifacts from xray
