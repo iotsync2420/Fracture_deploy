@@ -1,0 +1,51 @@
+# ==========================================
+# 1. Project Specific Large Files & Weights
+# ==========================================
+# Ignore the 207MB YOLO weights so Git never tries to push it to GitHub
+best.pt
+*.pt
+*.onnx
+*.engine
+
+# ==========================================
+# 2. Python Environment & Caches
+# ==========================================
+# Local virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python compiled bytecode and cache folders
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ipynb_checkpoints/
+
+# ==========================================
+# 3. Streamlit & Local Configurations
+# ==========================================
+# Streamlit local configuration files and history
+.streamlit/config.toml
+.streamlit/secrets.toml
+
+# Environment variables and private API keys
+.env
+
+# ==========================================
+# 4. Operating System & IDE Junk Files
+# ==========================================
+# macOS system files
+.DS_Store
+
+# Windows thumbnail caches
+Thumbs.db
+ehthumbs.db
+
+# VS Code and PyCharm local workspace settings
+.vscode/
+.idea/
+
+# Local log files
+*.log
