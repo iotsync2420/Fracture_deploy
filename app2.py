@@ -1,4 +1,6 @@
 
+import os  # <-- MUST BE AT THE VERY TOP
+import urllib.request
 import streamlit as st
 from ultralytics import YOLO
 from ultralytics.data.augment import LetterBox
