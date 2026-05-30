@@ -12,7 +12,16 @@ st.set_page_config(page_title="Bone Fracture Detection", layout="wide")
 
 @st.cache_resource
 def load_model():
-    return YOLO("best.pt")
+    MODEL_PATH = "best.pt"
+    MODEL_URL = "https://huggingface.co/beingVaishnavi/fracture-yolov8-weights/resolve/main/best.pt?download=true"
+
+    if not os.path.exists(MODEL_PATH):
+        # Displays a status spinner in the UI while downloading the 207MB file
+        with st.spinner("Downloading AI model weights from Hugging Face... This might take a minute."):
+            urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
+        st.success("Model download complete!")
+        
+    return YOLO(MODEL_PATH)
 
 model = load_model()
 
