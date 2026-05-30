@@ -24,4 +24,4 @@ COPY . .
 
 EXPOSE 8501
 
-CMD ["sh", "-c", "uvicorn app2.py:app --host 0.0.0.0 --port ${PORT:-10000}"]
+CMD ["streamlit", "run", "app2.py", "--server.address=0.0.0.0"]
